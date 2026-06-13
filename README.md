@@ -61,7 +61,7 @@ for the rest of the team. For **every** image it performs:
 ```
 .
 ├── preprocessing.py        # Module 1 (done)
-├── quality_assestment.py   # Module 2 (empty)
+├── quality_assestment.py   # Module 2 (done)
 ├── fading_analysis.py      # Module 3 (empty)
 ├── report_generator.py     # Module 4 (empty)
 ├── main.py                 # orchestrator (empty)
@@ -151,13 +151,84 @@ Each module should **read the Module 1 JSON, add its results, and write them bac
 (or hand them to `main.py`).** Suggested pattern so everything stays compatible:
 
 ### Module 2 — `quality_assestment.py`
-Read `processed_gray_path`, **crop to `content_box`**, then compute and return:
+Module 2 is now implemented. It is a pure image-processing module, so it does
+not use any LLM API.
+
+Input:
+- The preferred input is the metadata dictionary or JSON file produced by
+  `preprocessing.py`.
+- It uses `processed_gray_path` to read the preprocessed grayscale image.
+- It uses `analysis.content_box` to crop away the black letterbox padding before
+  calculating any score.
+
+Minimum metadata needed:
+```json
+{
+  "status": "ok",
+  "processed_gray_path": "data/processed/img_001_gray.png",
+  "analysis": {
+    "content_box": [65, 0, 381, 512]
+  }
+}
+```
+
+Processing flow:
+1. Check that preprocessing status is `"ok"`.
+2. Load the image from `processed_gray_path`.
+3. Crop to `analysis.content_box`.
+4. Calculate blur, brightness and contrast.
+5. Return scores scaled from 0 to 100.
+
+Output:
 ```json
 { "blur": 75, "brightness": 68, "contrast": 52 }
 ```
-Hints: blur = variance of the Laplacian (`cv2.Laplacian(...).var()`);
-brightness = mean pixel value; contrast = std of pixel values. Scale to 0–100.
-You can also surface `noise_sigma` from the metadata as a noise issue.
+
+Meaning of each score:
+- `blur` = sharpness score using variance of the Laplacian. Higher means sharper
+  and less blurry.
+- `brightness` = average grayscale pixel value. Higher means brighter.
+- `contrast` = grayscale standard deviation. Higher means stronger contrast.
+
+Main functions:
+```python
+calculate_blur_score(image)
+calculate_brightness(image)
+calculate_contrast(image)
+assess_quality(metadata)
+assess_image_quality(metadata)  # alias for assess_quality()
+```
+
+Example use inside Python:
+```python
+from quality_assestment import assess_quality
+
+quality = assess_quality(meta_from_preprocessing)
+print(quality)
+```
+
+Example result added back into the metadata:
+```json
+{
+  "image_id": "img_001",
+  "status": "ok",
+  "quality": {
+    "blur": 75,
+    "brightness": 68,
+    "contrast": 52
+  }
+}
+```
+
+Run Module 2 on all metadata JSON files:
+```bash
+python quality_assestment.py --meta outputs
+```
+
+Run Module 2 without writing results back to JSON:
+```bash
+python quality_assestment.py --meta outputs --no-write
+```
 
 ### Module 3 — `fading_analysis.py`
 Read `processed_color_path` (color is required for fading), **crop to
