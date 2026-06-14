@@ -348,3 +348,80 @@ The Module 4 LLM narrative calls **OpenRouter** using only Python's standard
 library (`urllib`) — no extra SDK to install. Set `OPENROUTER_API_KEY` and
 `LLM_MODEL` in a `.env` file to enable it; without them Module 4 falls back to a
 rule-based template and runs fully offline.
+
+---
+
+## Handover — what's left & how to continue
+
+**Status:** Modules 1–4 and the `main.py` orchestrator are done and tested on the
+61-image dataset. Running `python main.py` produces, for every photo: a metadata
+JSON (`outputs/<id>.json`), a styled report card (`outputs/reports/<id>_card.png`),
+and the archive dashboard (`outputs/reports/dashboard.png`).
+
+Two deliverables remain.
+
+### A. Telegram bot — *(Tool / Integration Developer)*
+
+The pipeline is decoupled from Telegram on purpose. The bot is a thin wrapper: run
+Modules 1–3 to build the metadata dict, then call Module 4. The per-user flow is
+**one photo in → one report out**.
+
+```python
+from preprocessing import preprocess_upload
+from quality_assestment import assess_quality
+from fading_analysis import update_metadata_with_fading
+from report_generator import generate_report, generate_dashboard
+
+# --- on a photo message ---
+meta = preprocess_upload(file_bytes, filename, "data/processed")  # Module 1
+meta["quality"] = assess_quality(meta)                            # Module 2
+meta = update_metadata_with_fading(meta)                          # Module 3
+report = generate_report(meta)                                    # Module 4
+bot.send_photo(report["card_path"])      # the report-card image
+bot.send_message(report["narrative"])    # full plain-English verdict
+
+# --- on /rank (optional, whole archive) ---
+import glob, json
+metas = [json.load(open(f)) for f in glob.glob("outputs/*.json")]
+bot.send_photo(generate_dashboard(metas))
+```
+
+To do:
+- Pick a library (e.g. `python-telegram-bot`) and add it to `requirements.txt`.
+- Put the bot token in `.env` (already git-ignored) as `TELEGRAM_BOT_TOKEN`.
+- Handle bad input: `preprocess_upload` returns `{"status": "error", ...}` for a
+  corrupt / non-image upload — reply with a friendly message instead of crashing.
+
+### B. Hermes/OpenClaw skill file — *(Skill Workflow Designer)*
+
+This is the assignment's main graded artifact and does **not exist yet**. It must
+include all nine sections (Instructions.pdf §6A). Mapped to this project:
+
+| Required section | What to write |
+|---|---|
+| Skill name | e.g. "Archive Photo Triage Assistant" |
+| Target user | History / museum archivists with large scanned-photo collections |
+| Real-world problem | Which of hundreds of old photos should be restored first? |
+| Input format | One photo per message (JPG/PNG); optional `/rank` over a set |
+| CV / image-processing method | resize · grayscale · denoise (NLM) · Laplacian sharpness · brightness / contrast · colour-saturation & tonal fading · edge/face heuristics → weighted condition score |
+| Step-by-step workflow | preprocess → quality → fading → report card + priority |
+| Output format | report-card image + narrative; `/rank` dashboard |
+| Limitation handling | low-confidence tags; denoising hides true sharpness; no expert judgement |
+| Ethical boundary | screening aid only, not a substitute for expert inspection; does not judge content or people |
+
+### Before you touch the code — things to know
+
+- **`.env`** holds `OPENROUTER_API_KEY` + `LLM_MODEL` (git-ignored). With them,
+  Module 4 writes an LLM narrative; without them it uses a rule-based template —
+  the pipeline never breaks either way. **Rotate the key after the project.**
+- **Sharpness is measured on the *denoised* image**, so it reads low for almost
+  every photo — that's why it is weighted only 0.10 in the condition score
+  (`WEIGHTS` in `report_generator.py`).
+- The JSON quality key is **`blur`** but it holds the *sharpness* score (a
+  half-finished rename). Read `quality["blur"]`.
+- The card shows a **trimmed** narrative; the **full** text is in
+  `report.narrative` — send that as the Telegram caption.
+- Running **many** LLM narratives back-to-back can hit OpenRouter rate limits (the
+  batch retries automatically). The live one-photo demo will not.
+- Regenerate everything: `python main.py`. Re-run only Modules 2–4 on existing
+  JSON: `python main.py --skip-preprocessing`.
